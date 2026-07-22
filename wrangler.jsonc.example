@@ -1,0 +1,32 @@
+/**
+ * Cloudflare Pages 配置文件示例
+ * 复制此文件为 wrangler.jsonc 并填入你的资源 ID
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "notepad",
+  "compatibility_date": "2026-06-12",
+  "pages_build_output_dir": "./dist",
+
+  "kv_namespaces": [
+    {
+      "binding": "NOTEPAD_KV",
+      "id": "YOUR_KV_NAMESPACE_ID",
+      "preview_id": "YOUR_KV_PREVIEW_ID",
+    },
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "NOTEPAD_R2",
+      "bucket_name": "YOUR_R2_BUCKET_NAME",
+      "preview_bucket_name": "YOUR_R2_BUCKET_NAME",
+      "remote": true,
+    },
+  ],
+
+  "vars": {
+    "ENABLE_EDGE_BLOCKING": "false",
+    "MAX_FOLDER_DEPTH": "5",
+  },
+}

@@ -1,0 +1,1344 @@
+------formdata-undici-028725106733
+Content-Disposition: form-data; name="metadata"
+
+{"main_module":"functionsWorker-0.6476447819093077.js"}
+------formdata-undici-028725106733
+Content-Disposition: form-data; name="functionsWorker-0.6476447819093077.js"; filename="functionsWorker-0.6476447819093077.js"
+Content-Type: application/javascript+module
+
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+
+// utils/jwt.ts
+async function verifyJwt(token, secret) {
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new Error("Invalid token");
+  const [headerB64, payloadB64, signature] = parts;
+  const data = `${headerB64}.${payloadB64}`;
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"]
+  );
+  const signatureUint8 = base64UrlDecode(signature);
+  const dataUint8 = encoder.encode(data);
+  const isValid = await crypto.subtle.verify("HMAC", key, signatureUint8, dataUint8);
+  if (!isValid) throw new Error("Invalid signature");
+  const payload = JSON.parse(atob(payloadB64));
+  if (payload.exp < Date.now() / 1e3) throw new Error("Token expired");
+  return payload;
+}
+__name(verifyJwt, "verifyJwt");
+function base64UrlDecode(str) {
+  str = str.replace(/-/g, "+").replace(/_/g, "/");
+  while (str.length % 4) str += "=";
+  return new Uint8Array(atob(str).split("").map((c) => c.charCodeAt(0)));
+}
+__name(base64UrlDecode, "base64UrlDecode");
+async function createJwt(payload, secret, expiresIn = 86400) {
+  const header = { alg: "HS256", typ: "JWT" };
+  const fullPayload = {
+    ...payload,
+    exp: Math.floor(Date.now() / 1e3) + expiresIn
+  };
+  const headerB64 = btoa(JSON.stringify(header)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  const payloadB64 = btoa(JSON.stringify(fullPayload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  const data = `${headerB64}.${payloadB64}`;
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(data));
+  const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  return `${headerB64}.${payloadB64}.${signatureB64}`;
+}
+__name(createJwt, "createJwt");
+function generateToken(length = 32) {
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  return Array.from(array, (byte) => byte.toString(36)).join("");
+}
+__name(generateToken, "generateToken");
+async function scryptHash(password) {
+  const encoder = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const derived = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: 1e5,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    256
+  );
+  return `${btoa(String.fromCharCode(...new Uint8Array(salt)))}:${btoa(String.fromCharCode(...new Uint8Array(derived)))}`;
+}
+__name(scryptHash, "scryptHash");
+async function verifyPassword(password, storedHash) {
+  const parts = storedHash.split(":");
+  if (parts.length !== 2) return false;
+  const saltB64 = parts[0];
+  const hashB64 = parts[1];
+  const salt = new Uint8Array(atob(saltB64).split("").map((c) => c.charCodeAt(0)));
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const derived = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: 1e5,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    256
+  );
+  const derivedB64 = btoa(String.fromCharCode(...new Uint8Array(derived)));
+  return derivedB64 === hashB64;
+}
+__name(verifyPassword, "verifyPassword");
+
+// api/auth/login.ts
+async function onRequestPost({ request, env }) {
+  const { password } = await request.json();
+  if (!password || typeof password !== "string") {
+    return new Response(JSON.stringify({ error: "Password required" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  let storedHash = await env.NOTEPAD_KV.get("config:password");
+  if (!storedHash) {
+    const initialPassword = env.INITIAL_PASSWORD;
+    if (!initialPassword) {
+      return new Response(JSON.stringify({ error: "No password configured" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    storedHash = await scryptHash(initialPassword);
+    await env.NOTEPAD_KV.put("config:password", storedHash);
+  }
+  const isValid = await verifyPassword(password, storedHash);
+  if (!isValid) {
+    return new Response(JSON.stringify({ error: "Invalid password" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const token = await createJwt({ userId: "user" }, env.JWT_SECRET, 7 * 24 * 60 * 60);
+  return new Response(JSON.stringify({ success: true }), {
+    headers: {
+      "Set-Cookie": `auth=${token}; HttpOnly; Secure; SameSite=Strict; Max-Age=${7 * 24 * 60 * 60}; Path=/`,
+      "Content-Type": "application/json"
+    }
+  });
+}
+__name(onRequestPost, "onRequestPost");
+
+// api/auth/logout.ts
+async function onRequestPost2() {
+  return new Response(JSON.stringify({ success: true }), {
+    headers: {
+      "Set-Cookie": "auth=; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Path=/",
+      "Content-Type": "application/json"
+    }
+  });
+}
+__name(onRequestPost2, "onRequestPost");
+
+// api/config/password.ts
+async function onRequestPut({ request, env }) {
+  const { oldPassword, newPassword } = await request.json();
+  if (!oldPassword || !newPassword) {
+    return new Response(JSON.stringify({ error: "Passwords required" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const storedHash = await env.NOTEPAD_KV.get("config:password");
+  if (!storedHash) {
+    return new Response(JSON.stringify({ error: "No password configured" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const isValid = await verifyPassword(oldPassword, storedHash);
+  if (!isValid) {
+    return new Response(JSON.stringify({ error: "Invalid password" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const newHash = await scryptHash(newPassword);
+  await env.NOTEPAD_KV.put("config:password", newHash);
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestPut, "onRequestPut");
+
+// api/folder/move.ts
+async function onRequestPut2({
+  request,
+  env
+}) {
+  const { oldPath, newPath } = await request.json();
+  const sanitizedOld = sanitizePath(oldPath);
+  const sanitizedNew = sanitizePath(newPath);
+  if (!sanitizedOld || !sanitizedNew) {
+    return new Response(JSON.stringify({ error: "Invalid path" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const list = await env.NOTEPAD_R2.list({ prefix: `${sanitizedOld}/` });
+  const objects = list.objects;
+  if (objects.length > 500) {
+    return new Response(JSON.stringify({ error: "Too many files, please move in batches" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const promises = [];
+  for (const obj of objects) {
+    const newKey = obj.key.replace(`${sanitizedOld}/`, `${sanitizedNew}/`);
+    const data = await env.NOTEPAD_R2.get(obj.key);
+    if (data) {
+      promises.push(env.NOTEPAD_R2.put(newKey, data.body));
+      promises.push(env.NOTEPAD_R2.delete(obj.key));
+    }
+  }
+  await Promise.all(promises);
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestPut2, "onRequestPut");
+function sanitizePath(path) {
+  return path.replace(/\.\./g, "").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+}
+__name(sanitizePath, "sanitizePath");
+
+// api/folder/rename.ts
+async function onRequestPut3({
+  request,
+  env
+}) {
+  const { oldPath, newPath } = await request.json();
+  const sanitizedOld = sanitizePath2(oldPath);
+  const sanitizedNew = sanitizePath2(newPath);
+  if (!sanitizedOld || !sanitizedNew) {
+    return new Response(JSON.stringify({ error: "Invalid path" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const list = await env.NOTEPAD_R2.list({ prefix: `${sanitizedOld}/` });
+  const objects = list.objects;
+  if (objects.length > 500) {
+    return new Response(JSON.stringify({ error: "Too many files, please rename in batches" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const promises = [];
+  for (const obj of objects) {
+    const newKey = obj.key.replace(`${sanitizedOld}/`, `${sanitizedNew}/`);
+    const data = await env.NOTEPAD_R2.get(obj.key);
+    if (data) {
+      promises.push(env.NOTEPAD_R2.put(newKey, data.body));
+      promises.push(env.NOTEPAD_R2.delete(obj.key));
+    }
+  }
+  await Promise.all(promises);
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestPut3, "onRequestPut");
+function sanitizePath2(path) {
+  return path.replace(/\.\./g, "").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+}
+__name(sanitizePath2, "sanitizePath");
+
+// api/share/[token].ts
+async function onRequestDelete({ params, env }) {
+  const token = params.token;
+  await env.NOTEPAD_KV.delete(`link:${token}`);
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestDelete, "onRequestDelete");
+
+// api/files/[[path]].ts
+async function onRequestGet({ params, env }) {
+  const filePath = "/" + params.path.join("/");
+  const sanitized = sanitizePath3(filePath);
+  if (!sanitized) {
+    return new Response(JSON.stringify({ error: "Invalid path" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const object = await env.NOTEPAD_R2.get(sanitized);
+  if (!object) {
+    return new Response(JSON.stringify({ error: "File not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const content = await object.text();
+  return new Response(JSON.stringify({ content, size: object.size, lastModified: object.lastModified }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestGet, "onRequestGet");
+async function onRequestPut4({ params, request, env }) {
+  const filePath = "/" + params.path.join("/");
+  const sanitized = sanitizePath3(filePath);
+  if (!sanitized) {
+    return new Response(JSON.stringify({ error: "Invalid path" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  const { content } = await request.json();
+  const encoder = new TextEncoder();
+  await env.NOTEPAD_R2.put(sanitized, encoder.encode(content));
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestPut4, "onRequestPut");
+async function onRequestDelete2({ params, env }) {
+  const filePath = "/" + params.path.join("/");
+  const sanitized = sanitizePath3(filePath);
+  if (!sanitized) {
+    return new Response(JSON.stringify({ error: "Invalid path" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  await env.NOTEPAD_R2.delete(sanitized);
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestDelete2, "onRequestDelete");
+function sanitizePath3(path) {
+  return path.replace(/\.\./g, "").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+}
+__name(sanitizePath3, "sanitizePath");
+
+// s/[token]/auth.ts
+async function onRequestPost3({
+  params,
+  request,
+  env
+}) {
+  const token = params.token;
+  const formData = await request.formData();
+  const password = formData.get("password");
+  const linkDataStr = await env.NOTEPAD_KV.get(`link:${token}`);
+  if (!linkDataStr) {
+    return new Response("Unauthorized", { status: 403 });
+  }
+  const linkData = JSON.parse(linkDataStr);
+  if (!linkData.password) {
+    return new Response("Unauthorized", { status: 403 });
+  }
+  const isValid = await verifyPassword(password, linkData.password);
+  if (!isValid) {
+    return new Response("Unauthorized", { status: 403 });
+  }
+  const maxAge = Math.floor((linkData.expires - Date.now()) / 1e3);
+  return new Response("Authenticated", {
+    headers: {
+      "Set-Cookie": `share_auth=${token}; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}; Path=/`,
+      Location: `/s/${token}`
+    },
+    status: 302
+  });
+}
+__name(onRequestPost3, "onRequestPost");
+
+// api/config.ts
+async function onRequestGet2({ env }) {
+  const keys = ["config:siteTitle", "config:defaultFont", "config:theme", "config:autoWrap"];
+  const config = {};
+  for (const key of keys) {
+    config[key] = await env.NOTEPAD_KV.get(key);
+  }
+  return new Response(JSON.stringify(config), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestGet2, "onRequestGet");
+async function onRequestPut5({ request, env }) {
+  const data = await request.json();
+  const allowedKeys = ["siteTitle", "defaultFont", "theme", "autoWrap"];
+  for (const key of allowedKeys) {
+    if (data[key] !== void 0) {
+      await env.NOTEPAD_KV.put(`config:${key}`, String(data[key]));
+    }
+  }
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestPut5, "onRequestPut");
+
+// api/files.ts
+async function onRequestGet3({ request, env }) {
+  const url = new URL(request.url);
+  const path = url.searchParams.get("path") || "";
+  const cleanedPath = sanitizePath4(path);
+  const prefix = cleanedPath ? `${cleanedPath}/` : "";
+  const list = await env.NOTEPAD_R2.list({ prefix, delimiter: "/" });
+  const folders = [];
+  const files = [];
+  for (const obj of list.objects) {
+    if (obj.key.endsWith("/.keep")) {
+      const folderName = obj.key.slice(0, -6);
+      if (folderName !== cleanedPath) {
+        folders.push(folderName.slice(prefix.length));
+      }
+    } else if (!obj.key.endsWith("/")) {
+      files.push({
+        name: obj.key.slice(prefix.length),
+        size: obj.size || 0,
+        lastModified: obj.lastModified || /* @__PURE__ */ new Date()
+      });
+    }
+  }
+  for (const prefix2 of list.prefixes) {
+    const folderName = prefix2.name.slice(prefix2.length, -1);
+    if (folderName && !folders.includes(folderName)) {
+      folders.push(folderName);
+    }
+  }
+  return new Response(JSON.stringify({ folders, files }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestGet3, "onRequestGet");
+function sanitizePath4(path) {
+  return path.replace(/\.\./g, "").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+}
+__name(sanitizePath4, "sanitizePath");
+
+// api/folder.ts
+async function onRequestPost4({ request, env }) {
+  const { path } = await request.json();
+  const sanitized = sanitizePath5(path);
+  if (!sanitized) {
+    return new Response(JSON.stringify({ error: "Invalid path" }), { status: 400 });
+  }
+  await env.NOTEPAD_R2.put(`${sanitized}/.keep`, new Uint8Array());
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestPost4, "onRequestPost");
+async function onRequestDelete3({ request, env }) {
+  const { path } = await request.json();
+  const sanitized = sanitizePath5(path);
+  if (!sanitized) {
+    return new Response(JSON.stringify({ error: "Invalid path" }), { status: 400 });
+  }
+  const list = await env.NOTEPAD_R2.list({ prefix: `${sanitized}/` });
+  const keys = list.objects.map((obj) => obj.key);
+  if (keys.length > 500) {
+    return new Response(JSON.stringify({ error: "Too many files, please delete in batches" }), { status: 400 });
+  }
+  await Promise.all(keys.map((key) => env.NOTEPAD_R2.delete(key)));
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestDelete3, "onRequestDelete");
+function sanitizePath5(path) {
+  return path.replace(/\.\./g, "").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+}
+__name(sanitizePath5, "sanitizePath");
+
+// api/raw.ts
+async function onRequestPost5({ request, env }) {
+  const { filename, expiresInHours, oneTime, contentType, corsOrigin } = await request.json();
+  const token = generateToken(24);
+  const expires = Date.now() + expiresInHours * 60 * 60 * 1e3;
+  const linkData = {
+    type: "raw",
+    filename,
+    expires,
+    oneTime,
+    contentType: contentType || "text/plain; charset=utf-8",
+    corsOrigin: corsOrigin || "*",
+    createdAt: Date.now(),
+    used: false
+  };
+  const ttl = expiresInHours === 0 ? void 0 : expiresInHours * 60 * 60;
+  await env.NOTEPAD_KV.put(`link:${token}`, JSON.stringify(linkData), { expirationTtl: ttl });
+  return new Response(JSON.stringify({ success: true, token, url: `/r/${token}` }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestPost5, "onRequestPost");
+
+// api/share.ts
+async function onRequestPost6({ request, env }) {
+  const { filename, expiresInHours, oneTime, password, renderMarkdown: renderMarkdown2, allowIframe } = await request.json();
+  const token = generateToken(24);
+  const expires = Date.now() + expiresInHours * 60 * 60 * 1e3;
+  let passwordHash = null;
+  if (password) {
+    passwordHash = await scryptHash(password);
+  }
+  const linkData = {
+    type: "view",
+    filename,
+    expires,
+    oneTime,
+    password: passwordHash,
+    renderMarkdown: renderMarkdown2 !== void 0 ? renderMarkdown2 : true,
+    allowIframe: allowIframe !== void 0 ? allowIframe : false,
+    createdAt: Date.now(),
+    used: false
+  };
+  const ttl = expiresInHours === 0 ? void 0 : expiresInHours * 60 * 60;
+  await env.NOTEPAD_KV.put(`link:${token}`, JSON.stringify(linkData), { expirationTtl: ttl });
+  return new Response(JSON.stringify({ success: true, token, url: `/s/${token}` }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestPost6, "onRequestPost");
+
+// api/shares.ts
+async function onRequestGet4({ env }) {
+  const list = await env.NOTEPAD_KV.list({ prefix: "link:" });
+  const shares = [];
+  for (const key of list.keys) {
+    const value = await env.NOTEPAD_KV.get(key.name);
+    if (value) {
+      const data = JSON.parse(value);
+      shares.push({
+        token: key.name.slice(5),
+        ...data
+      });
+    }
+  }
+  return new Response(JSON.stringify(shares), {
+    headers: { "Content-Type": "application/json" }
+  });
+}
+__name(onRequestGet4, "onRequestGet");
+
+// r/[token].ts
+async function onRequestGet5({ params, env }) {
+  const token = params.token;
+  const linkDataStr = await env.NOTEPAD_KV.get(`link:${token}`);
+  if (!linkDataStr) {
+    return new Response("Link not found or expired", { status: 404 });
+  }
+  const linkData = JSON.parse(linkDataStr);
+  if (linkData.expires && Date.now() > linkData.expires) {
+    await env.NOTEPAD_KV.delete(`link:${token}`);
+    return new Response("Link expired", { status: 410 });
+  }
+  const object = await env.NOTEPAD_R2.get(linkData.filename);
+  if (!object) {
+    return new Response("File not found", { status: 404 });
+  }
+  const content = await object.text();
+  if (linkData.oneTime) {
+    await env.NOTEPAD_KV.delete(`link:${token}`);
+  }
+  const headers = {
+    "Content-Type": linkData.contentType || "text/plain; charset=utf-8",
+    "X-Content-Type-Options": "nosniff",
+    "Access-Control-Allow-Methods": "GET, OPTIONS"
+  };
+  if (linkData.corsOrigin) {
+    headers["Access-Control-Allow-Origin"] = linkData.corsOrigin;
+  }
+  return new Response(content, { headers });
+}
+__name(onRequestGet5, "onRequestGet");
+
+// s/[token].ts
+async function onRequestGet6({
+  params,
+  request,
+  env
+}) {
+  const token = params.token;
+  const linkDataStr = await env.NOTEPAD_KV.get(`link:${token}`);
+  if (!linkDataStr) {
+    return new Response("Link not found or expired", { status: 404 });
+  }
+  const linkData = JSON.parse(linkDataStr);
+  if (linkData.expires && Date.now() > linkData.expires) {
+    await env.NOTEPAD_KV.delete(`link:${token}`);
+    return new Response("Link expired", { status: 410 });
+  }
+  if (linkData.password) {
+    const cookie = request.headers.get("Cookie");
+    if (!cookie || !cookie.includes(`share_auth=${token}`)) {
+      return new Response(
+        `
+        <!DOCTYPE html>
+        <html>
+          <head><title>Password Required</title></head>
+          <body style="font-family: sans-serif; padding: 40px; text-align: center;">
+            <h2>This file is password protected</h2>
+            <form action="/s/${token}/auth" method="post" style="margin-top: 20px;">
+              <input type="password" name="password" placeholder="Enter password" required
+                style="padding: 10px; font-size: 16px; width: 200px;">
+              <button type="submit" style="padding: 10px 20px; font-size: 16px; margin-left: 10px;">Submit</button>
+            </form>
+          </body>
+        </html>
+      `,
+        { headers: { "Content-Type": "text/html" } }
+      );
+    }
+  }
+  const object = await env.NOTEPAD_R2.get(linkData.filename);
+  if (!object) {
+    return new Response("File not found", { status: 404 });
+  }
+  const content = await object.text();
+  if (linkData.oneTime) {
+    await env.NOTEPAD_KV.delete(`link:${token}`);
+  }
+  const headers = {
+    "Content-Type": "text/html"
+  };
+  if (!linkData.allowIframe) {
+    headers["X-Frame-Options"] = "DENY";
+    headers["Content-Security-Policy"] = "frame-ancestors 'none'";
+  }
+  let renderedContent = escapeHtml(content);
+  if (linkData.renderMarkdown) {
+    renderedContent = renderMarkdown(content);
+  }
+  return new Response(
+    `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHtml(linkData.filename)}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; line-height: 1.6; }
+          pre { background: #f4f4f4; padding: 16px; border-radius: 4px; overflow-x: auto; }
+          code { background: #f4f4f4; padding: 2px 4px; border-radius: 2px; }
+          pre code { background: none; padding: 0; }
+          blockquote { border-left: 4px solid #ddd; margin: 0; padding-left: 16px; color: #666; }
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background: #f4f4f4; }
+          img { max-width: 100%; }
+        </style>
+      </head>
+      <body>
+        ${renderedContent}
+      </body>
+    </html>
+  `,
+    { headers }
+  );
+}
+__name(onRequestGet6, "onRequestGet");
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+__name(escapeHtml, "escapeHtml");
+function renderMarkdown(text) {
+  let html = escapeHtml(text);
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="$1">$2</code></pre>');
+  html = html.replace(/```\n([\s\S]*?)```/g, "<pre><code>$1</code></pre>");
+  html = html.replace(/^### (.*$)/gm, "<h3>$1</h3>");
+  html = html.replace(/^## (.*$)/gm, "<h2>$1</h2>");
+  html = html.replace(/^# (.*$)/gm, "<h1>$1</h1>");
+  html = html.replace(/\*\*\*(.*?)\*\*\*/g, "<strong><em>$1</em></strong>");
+  html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\*(.*?)\*/g, "<em>$1</em>");
+  html = html.replace(/___(.*?)___/g, "<strong><em>$1</em></strong>");
+  html = html.replace(/__(.*?)__/g, "<strong>$1</strong>");
+  html = html.replace(/_(.*?)_/g, "<em>$1</em>");
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener">$1</a>'
+  );
+  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">');
+  html = html.replace(/^&gt; (.*$)/gm, "<blockquote>$1</blockquote>");
+  html = html.replace(/^---$/gm, "<hr>");
+  html = html.replace(/^\- (.*$)/gm, "<li>$1</li>");
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>");
+  html = html.replace(/^\d+\. (.*$)/gm, "<li>$1</li>");
+  html = html.replace(/\n\n/g, "</p><p>");
+  html = html.replace(/\n/g, "<br>");
+  return `<p>${html}</p>`;
+}
+__name(renderMarkdown, "renderMarkdown");
+
+// _middleware.ts
+var onRequest = /* @__PURE__ */ __name(async (context) => {
+  const url = new URL(context.request.url);
+  const path = url.pathname;
+  if (path.startsWith("/s/") || path.startsWith("/r/")) {
+    return;
+  }
+  if (path === "/api/auth/login") {
+    return;
+  }
+  if (path.startsWith("/api/")) {
+    const authHeader = context.request.headers.get("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    const token = authHeader.slice(7);
+    try {
+      const decoded = await verifyJwt(token, context.env.JWT_SECRET);
+      const request = new Request(context.request);
+      request.headers.set("x-user-id", decoded.userId);
+      context.request = request;
+      return;
+    } catch {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  }
+  return;
+}, "onRequest");
+
+// ../.wrangler/tmp/pages-Wtl5pF/functionsRoutes-0.6803697460372501.mjs
+var routes = [
+  {
+    routePath: "/api/auth/login",
+    mountPath: "/api/auth",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost]
+  },
+  {
+    routePath: "/api/auth/logout",
+    mountPath: "/api/auth",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost2]
+  },
+  {
+    routePath: "/api/config/password",
+    mountPath: "/api/config",
+    method: "PUT",
+    middlewares: [],
+    modules: [onRequestPut]
+  },
+  {
+    routePath: "/api/folder/move",
+    mountPath: "/api/folder",
+    method: "PUT",
+    middlewares: [],
+    modules: [onRequestPut2]
+  },
+  {
+    routePath: "/api/folder/rename",
+    mountPath: "/api/folder",
+    method: "PUT",
+    middlewares: [],
+    modules: [onRequestPut3]
+  },
+  {
+    routePath: "/api/share/:token",
+    mountPath: "/api/share",
+    method: "DELETE",
+    middlewares: [],
+    modules: [onRequestDelete]
+  },
+  {
+    routePath: "/api/files/:path*",
+    mountPath: "/api/files",
+    method: "DELETE",
+    middlewares: [],
+    modules: [onRequestDelete2]
+  },
+  {
+    routePath: "/api/files/:path*",
+    mountPath: "/api/files",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet]
+  },
+  {
+    routePath: "/api/files/:path*",
+    mountPath: "/api/files",
+    method: "PUT",
+    middlewares: [],
+    modules: [onRequestPut4]
+  },
+  {
+    routePath: "/s/:token/auth",
+    mountPath: "/s/:token",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost3]
+  },
+  {
+    routePath: "/api/config",
+    mountPath: "/api",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet2]
+  },
+  {
+    routePath: "/api/config",
+    mountPath: "/api",
+    method: "PUT",
+    middlewares: [],
+    modules: [onRequestPut5]
+  },
+  {
+    routePath: "/api/files",
+    mountPath: "/api",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet3]
+  },
+  {
+    routePath: "/api/folder",
+    mountPath: "/api",
+    method: "DELETE",
+    middlewares: [],
+    modules: [onRequestDelete3]
+  },
+  {
+    routePath: "/api/folder",
+    mountPath: "/api",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost4]
+  },
+  {
+    routePath: "/api/raw",
+    mountPath: "/api",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost5]
+  },
+  {
+    routePath: "/api/share",
+    mountPath: "/api",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost6]
+  },
+  {
+    routePath: "/api/shares",
+    mountPath: "/api",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet4]
+  },
+  {
+    routePath: "/r/:token",
+    mountPath: "/r",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet5]
+  },
+  {
+    routePath: "/s/:token",
+    mountPath: "/s",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet6]
+  },
+  {
+    routePath: "/",
+    mountPath: "/",
+    method: "",
+    middlewares: [onRequest],
+    modules: []
+  }
+];
+
+// ../node_modules/path-to-regexp/dist.es2015/index.js
+function lexer(str) {
+  var tokens = [];
+  var i = 0;
+  while (i < str.length) {
+    var char = str[i];
+    if (char === "*" || char === "+" || char === "?") {
+      tokens.push({ type: "MODIFIER", index: i, value: str[i++] });
+      continue;
+    }
+    if (char === "\\") {
+      tokens.push({ type: "ESCAPED_CHAR", index: i++, value: str[i++] });
+      continue;
+    }
+    if (char === "{") {
+      tokens.push({ type: "OPEN", index: i, value: str[i++] });
+      continue;
+    }
+    if (char === "}") {
+      tokens.push({ type: "CLOSE", index: i, value: str[i++] });
+      continue;
+    }
+    if (char === ":") {
+      var name = "";
+      var j = i + 1;
+      while (j < str.length) {
+        var code = str.charCodeAt(j);
+        if (
+          // `0-9`
+          code >= 48 && code <= 57 || // `A-Z`
+          code >= 65 && code <= 90 || // `a-z`
+          code >= 97 && code <= 122 || // `_`
+          code === 95
+        ) {
+          name += str[j++];
+          continue;
+        }
+        break;
+      }
+      if (!name)
+        throw new TypeError("Missing parameter name at ".concat(i));
+      tokens.push({ type: "NAME", index: i, value: name });
+      i = j;
+      continue;
+    }
+    if (char === "(") {
+      var count = 1;
+      var pattern = "";
+      var j = i + 1;
+      if (str[j] === "?") {
+        throw new TypeError('Pattern cannot start with "?" at '.concat(j));
+      }
+      while (j < str.length) {
+        if (str[j] === "\\") {
+          pattern += str[j++] + str[j++];
+          continue;
+        }
+        if (str[j] === ")") {
+          count--;
+          if (count === 0) {
+            j++;
+            break;
+          }
+        } else if (str[j] === "(") {
+          count++;
+          if (str[j + 1] !== "?") {
+            throw new TypeError("Capturing groups are not allowed at ".concat(j));
+          }
+        }
+        pattern += str[j++];
+      }
+      if (count)
+        throw new TypeError("Unbalanced pattern at ".concat(i));
+      if (!pattern)
+        throw new TypeError("Missing pattern at ".concat(i));
+      tokens.push({ type: "PATTERN", index: i, value: pattern });
+      i = j;
+      continue;
+    }
+    tokens.push({ type: "CHAR", index: i, value: str[i++] });
+  }
+  tokens.push({ type: "END", index: i, value: "" });
+  return tokens;
+}
+__name(lexer, "lexer");
+function parse(str, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var tokens = lexer(str);
+  var _a = options.prefixes, prefixes = _a === void 0 ? "./" : _a, _b = options.delimiter, delimiter = _b === void 0 ? "/#?" : _b;
+  var result = [];
+  var key = 0;
+  var i = 0;
+  var path = "";
+  var tryConsume = /* @__PURE__ */ __name(function(type) {
+    if (i < tokens.length && tokens[i].type === type)
+      return tokens[i++].value;
+  }, "tryConsume");
+  var mustConsume = /* @__PURE__ */ __name(function(type) {
+    var value2 = tryConsume(type);
+    if (value2 !== void 0)
+      return value2;
+    var _a2 = tokens[i], nextType = _a2.type, index = _a2.index;
+    throw new TypeError("Unexpected ".concat(nextType, " at ").concat(index, ", expected ").concat(type));
+  }, "mustConsume");
+  var consumeText = /* @__PURE__ */ __name(function() {
+    var result2 = "";
+    var value2;
+    while (value2 = tryConsume("CHAR") || tryConsume("ESCAPED_CHAR")) {
+      result2 += value2;
+    }
+    return result2;
+  }, "consumeText");
+  var isSafe = /* @__PURE__ */ __name(function(value2) {
+    for (var _i = 0, delimiter_1 = delimiter; _i < delimiter_1.length; _i++) {
+      var char2 = delimiter_1[_i];
+      if (value2.indexOf(char2) > -1)
+        return true;
+    }
+    return false;
+  }, "isSafe");
+  var safePattern = /* @__PURE__ */ __name(function(prefix2) {
+    var prev = result[result.length - 1];
+    var prevText = prefix2 || (prev && typeof prev === "string" ? prev : "");
+    if (prev && !prevText) {
+      throw new TypeError('Must have text between two parameters, missing text after "'.concat(prev.name, '"'));
+    }
+    if (!prevText || isSafe(prevText))
+      return "[^".concat(escapeString(delimiter), "]+?");
+    return "(?:(?!".concat(escapeString(prevText), ")[^").concat(escapeString(delimiter), "])+?");
+  }, "safePattern");
+  while (i < tokens.length) {
+    var char = tryConsume("CHAR");
+    var name = tryConsume("NAME");
+    var pattern = tryConsume("PATTERN");
+    if (name || pattern) {
+      var prefix = char || "";
+      if (prefixes.indexOf(prefix) === -1) {
+        path += prefix;
+        prefix = "";
+      }
+      if (path) {
+        result.push(path);
+        path = "";
+      }
+      result.push({
+        name: name || key++,
+        prefix,
+        suffix: "",
+        pattern: pattern || safePattern(prefix),
+        modifier: tryConsume("MODIFIER") || ""
+      });
+      continue;
+    }
+    var value = char || tryConsume("ESCAPED_CHAR");
+    if (value) {
+      path += value;
+      continue;
+    }
+    if (path) {
+      result.push(path);
+      path = "";
+    }
+    var open = tryConsume("OPEN");
+    if (open) {
+      var prefix = consumeText();
+      var name_1 = tryConsume("NAME") || "";
+      var pattern_1 = tryConsume("PATTERN") || "";
+      var suffix = consumeText();
+      mustConsume("CLOSE");
+      result.push({
+        name: name_1 || (pattern_1 ? key++ : ""),
+        pattern: name_1 && !pattern_1 ? safePattern(prefix) : pattern_1,
+        prefix,
+        suffix,
+        modifier: tryConsume("MODIFIER") || ""
+      });
+      continue;
+    }
+    mustConsume("END");
+  }
+  return result;
+}
+__name(parse, "parse");
+function match(str, options) {
+  var keys = [];
+  var re = pathToRegexp(str, keys, options);
+  return regexpToFunction(re, keys, options);
+}
+__name(match, "match");
+function regexpToFunction(re, keys, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var _a = options.decode, decode = _a === void 0 ? function(x) {
+    return x;
+  } : _a;
+  return function(pathname) {
+    var m = re.exec(pathname);
+    if (!m)
+      return false;
+    var path = m[0], index = m.index;
+    var params = /* @__PURE__ */ Object.create(null);
+    var _loop_1 = /* @__PURE__ */ __name(function(i2) {
+      if (m[i2] === void 0)
+        return "continue";
+      var key = keys[i2 - 1];
+      if (key.modifier === "*" || key.modifier === "+") {
+        params[key.name] = m[i2].split(key.prefix + key.suffix).map(function(value) {
+          return decode(value, key);
+        });
+      } else {
+        params[key.name] = decode(m[i2], key);
+      }
+    }, "_loop_1");
+    for (var i = 1; i < m.length; i++) {
+      _loop_1(i);
+    }
+    return { path, index, params };
+  };
+}
+__name(regexpToFunction, "regexpToFunction");
+function escapeString(str) {
+  return str.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
+}
+__name(escapeString, "escapeString");
+function flags(options) {
+  return options && options.sensitive ? "" : "i";
+}
+__name(flags, "flags");
+function regexpToRegexp(path, keys) {
+  if (!keys)
+    return path;
+  var groupsRegex = /\((?:\?<(.*?)>)?(?!\?)/g;
+  var index = 0;
+  var execResult = groupsRegex.exec(path.source);
+  while (execResult) {
+    keys.push({
+      // Use parenthesized substring match if available, index otherwise
+      name: execResult[1] || index++,
+      prefix: "",
+      suffix: "",
+      modifier: "",
+      pattern: ""
+    });
+    execResult = groupsRegex.exec(path.source);
+  }
+  return path;
+}
+__name(regexpToRegexp, "regexpToRegexp");
+function arrayToRegexp(paths, keys, options) {
+  var parts = paths.map(function(path) {
+    return pathToRegexp(path, keys, options).source;
+  });
+  return new RegExp("(?:".concat(parts.join("|"), ")"), flags(options));
+}
+__name(arrayToRegexp, "arrayToRegexp");
+function stringToRegexp(path, keys, options) {
+  return tokensToRegexp(parse(path, options), keys, options);
+}
+__name(stringToRegexp, "stringToRegexp");
+function tokensToRegexp(tokens, keys, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var _a = options.strict, strict = _a === void 0 ? false : _a, _b = options.start, start = _b === void 0 ? true : _b, _c = options.end, end = _c === void 0 ? true : _c, _d = options.encode, encode = _d === void 0 ? function(x) {
+    return x;
+  } : _d, _e = options.delimiter, delimiter = _e === void 0 ? "/#?" : _e, _f = options.endsWith, endsWith = _f === void 0 ? "" : _f;
+  var endsWithRe = "[".concat(escapeString(endsWith), "]|$");
+  var delimiterRe = "[".concat(escapeString(delimiter), "]");
+  var route = start ? "^" : "";
+  for (var _i = 0, tokens_1 = tokens; _i < tokens_1.length; _i++) {
+    var token = tokens_1[_i];
+    if (typeof token === "string") {
+      route += escapeString(encode(token));
+    } else {
+      var prefix = escapeString(encode(token.prefix));
+      var suffix = escapeString(encode(token.suffix));
+      if (token.pattern) {
+        if (keys)
+          keys.push(token);
+        if (prefix || suffix) {
+          if (token.modifier === "+" || token.modifier === "*") {
+            var mod = token.modifier === "*" ? "?" : "";
+            route += "(?:".concat(prefix, "((?:").concat(token.pattern, ")(?:").concat(suffix).concat(prefix, "(?:").concat(token.pattern, "))*)").concat(suffix, ")").concat(mod);
+          } else {
+            route += "(?:".concat(prefix, "(").concat(token.pattern, ")").concat(suffix, ")").concat(token.modifier);
+          }
+        } else {
+          if (token.modifier === "+" || token.modifier === "*") {
+            throw new TypeError('Can not repeat "'.concat(token.name, '" without a prefix and suffix'));
+          }
+          route += "(".concat(token.pattern, ")").concat(token.modifier);
+        }
+      } else {
+        route += "(?:".concat(prefix).concat(suffix, ")").concat(token.modifier);
+      }
+    }
+  }
+  if (end) {
+    if (!strict)
+      route += "".concat(delimiterRe, "?");
+    route += !options.endsWith ? "$" : "(?=".concat(endsWithRe, ")");
+  } else {
+    var endToken = tokens[tokens.length - 1];
+    var isEndDelimited = typeof endToken === "string" ? delimiterRe.indexOf(endToken[endToken.length - 1]) > -1 : endToken === void 0;
+    if (!strict) {
+      route += "(?:".concat(delimiterRe, "(?=").concat(endsWithRe, "))?");
+    }
+    if (!isEndDelimited) {
+      route += "(?=".concat(delimiterRe, "|").concat(endsWithRe, ")");
+    }
+  }
+  return new RegExp(route, flags(options));
+}
+__name(tokensToRegexp, "tokensToRegexp");
+function pathToRegexp(path, keys, options) {
+  if (path instanceof RegExp)
+    return regexpToRegexp(path, keys);
+  if (Array.isArray(path))
+    return arrayToRegexp(path, keys, options);
+  return stringToRegexp(path, keys, options);
+}
+__name(pathToRegexp, "pathToRegexp");
+
+// ../node_modules/wrangler/templates/pages-template-worker.ts
+var escapeRegex = /[.+?^${}()|[\]\\]/g;
+function* executeRequest(request) {
+  const requestPath = new URL(request.url).pathname;
+  for (const route of [...routes].reverse()) {
+    if (route.method && route.method !== request.method) {
+      continue;
+    }
+    const routeMatcher = match(route.routePath.replace(escapeRegex, "\\$&"), {
+      end: false
+    });
+    const mountMatcher = match(route.mountPath.replace(escapeRegex, "\\$&"), {
+      end: false
+    });
+    const matchResult = routeMatcher(requestPath);
+    const mountMatchResult = mountMatcher(requestPath);
+    if (matchResult && mountMatchResult) {
+      for (const handler of route.middlewares.flat()) {
+        yield {
+          handler,
+          params: matchResult.params,
+          path: mountMatchResult.path
+        };
+      }
+    }
+  }
+  for (const route of routes) {
+    if (route.method && route.method !== request.method) {
+      continue;
+    }
+    const routeMatcher = match(route.routePath.replace(escapeRegex, "\\$&"), {
+      end: true
+    });
+    const mountMatcher = match(route.mountPath.replace(escapeRegex, "\\$&"), {
+      end: false
+    });
+    const matchResult = routeMatcher(requestPath);
+    const mountMatchResult = mountMatcher(requestPath);
+    if (matchResult && mountMatchResult && route.modules.length) {
+      for (const handler of route.modules.flat()) {
+        yield {
+          handler,
+          params: matchResult.params,
+          path: matchResult.path
+        };
+      }
+      break;
+    }
+  }
+}
+__name(executeRequest, "executeRequest");
+var pages_template_worker_default = {
+  async fetch(originalRequest, env, workerContext) {
+    let request = originalRequest;
+    const handlerIterator = executeRequest(request);
+    let data = {};
+    let isFailOpen = false;
+    const next = /* @__PURE__ */ __name(async (input, init) => {
+      if (input !== void 0) {
+        let url = input;
+        if (typeof input === "string") {
+          url = new URL(input, request.url).toString();
+        }
+        request = new Request(url, init);
+      }
+      const result = handlerIterator.next();
+      if (result.done === false) {
+        const { handler, params, path } = result.value;
+        const context = {
+          request: new Request(request.clone()),
+          functionPath: path,
+          next,
+          params,
+          get data() {
+            return data;
+          },
+          set data(value) {
+            if (typeof value !== "object" || value === null) {
+              throw new Error("context.data must be an object");
+            }
+            data = value;
+          },
+          env,
+          waitUntil: workerContext.waitUntil.bind(workerContext),
+          passThroughOnException: /* @__PURE__ */ __name(() => {
+            isFailOpen = true;
+          }, "passThroughOnException")
+        };
+        const response = await handler(context);
+        if (!(response instanceof Response)) {
+          throw new Error("Your Pages function should return a Response");
+        }
+        return cloneResponse(response);
+      } else if ("ASSETS") {
+        const response = await env["ASSETS"].fetch(request);
+        return cloneResponse(response);
+      } else {
+        const response = await fetch(request);
+        return cloneResponse(response);
+      }
+    }, "next");
+    try {
+      return await next();
+    } catch (error) {
+      if (isFailOpen) {
+        const response = await env["ASSETS"].fetch(request);
+        return cloneResponse(response);
+      }
+      throw error;
+    }
+  }
+};
+var cloneResponse = /* @__PURE__ */ __name((response) => (
+  // https://fetch.spec.whatwg.org/#null-body-status
+  new Response(
+    [101, 204, 205, 304].includes(response.status) ? null : response.body,
+    response
+  )
+), "cloneResponse");
+export {
+  pages_template_worker_default as default
+};
+
+------formdata-undici-028725106733--
