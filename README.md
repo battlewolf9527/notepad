@@ -25,6 +25,16 @@
 | 虚拟滚动      | vue-virtual-scroller           | ^2.0.0-beta.8 |
 | 键盘快捷键    | @vueuse/core                   | ^11.1.0       |
 
+## 界面预览
+
+<div align="center">
+  <img src="screenshots/1.png" alt="主界面" width="300" style="margin: 0 5px;">
+  <img src="screenshots/2.png" alt="文件菜单" width="300" style="margin: 0 5px;">
+  <img src="screenshots/3.png" alt="Markdown 预览" width="300" style="margin: 0 5px;">
+  <img src="screenshots/4.png" alt="格式菜单" width="300" style="margin: 0 5px;">
+  <img src="screenshots/5.png" alt="关于" width="300" style="margin: 0 5px;">
+</div>
+
 ## 核心功能
 
 ### 文件夹级密码保护
