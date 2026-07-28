@@ -11,6 +11,7 @@ import { useAppDialogs } from './composables/useAppDialogs'
 
 import MenuBar from './components/MenuBar.vue'
 import StatusBar from './components/StatusBar.vue'
+import FindDialog from './components/FindDialog.vue'
 import FindReplace from './components/FindReplace.vue'
 import FontDialog from './components/FontDialog.vue'
 import FileDialog from './components/FileDialog.vue'
@@ -55,7 +56,8 @@ async function handleAdminLogin(password: string) {
 const dialogs = useAppDialogs()
 
 const {
-  showFindReplace,
+  showFindDialog,
+  showReplaceDialog,
   showGoToDialog,
   showFontDialog,
   showOpenDialog,
@@ -68,8 +70,10 @@ const {
   showAbout,
   showAdminLoginDialog,
   downloadFilename,
-  openFindReplace,
-  closeFindReplace,
+  openFindDialog,
+  closeFindDialog,
+  openReplaceDialog,
+  closeReplaceDialog,
   openGoToDialog,
   closeGoToDialog,
   openFontDialog,
@@ -90,6 +94,8 @@ const {
   closeDownloadPrompt,
   openAdminLoginDialog,
   closeAdminLoginDialog,
+  openAbout,
+  closeAbout,
 } = dialogs
 
 const {
@@ -109,45 +115,7 @@ const {
   handleAdminLoginSuccess,
   handleAdminLoginClose,
   exit,
-} = useFileOperations({
-  showFindReplace,
-  showGoToDialog,
-  showFontDialog,
-  showOpenDialog,
-  showSaveDialog,
-  showShareDialog,
-  showRawDialog,
-  showShareManager,
-  showSettings,
-  showDownloadPrompt,
-  showAbout,
-  showAdminLoginDialog,
-  downloadFilename,
-  openFindReplace,
-  closeFindReplace,
-  openGoToDialog,
-  closeGoToDialog,
-  openFontDialog,
-  closeFontDialog,
-  openOpenDialog,
-  closeOpenDialog,
-  openSaveDialog,
-  closeSaveDialog,
-  openShareDialog,
-  closeShareDialog,
-  openRawDialog,
-  closeRawDialog,
-  openShareManager,
-  closeShareManager,
-  openSettings,
-  closeSettings,
-  openDownloadPrompt,
-  closeDownloadPrompt,
-  openAdminLoginDialog,
-  closeAdminLoginDialog,
-  openAbout: dialogs.openAbout,
-  closeAbout: dialogs.closeAbout,
-})
+} = useFileOperations(dialogs)
 
 const {
   undo,
@@ -302,9 +270,11 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
 
     <StatusBar />
 
+    <FindDialog :visible="showFindDialog" @close="closeFindDialog" @find="handleFind" />
+
     <FindReplace
-      :visible="showFindReplace"
-      @close="closeFindReplace"
+      :visible="showReplaceDialog"
+      @close="closeReplaceDialog"
       @find="handleFind"
       @replace="handleReplace"
       @replace-all="handleReplaceAll"

@@ -9,7 +9,6 @@ import { useDraggable } from '../composables/useDraggable'
 import { formatExpires, formatCreatedAt } from '../utils/share'
 import { getOrigin } from '../utils/constants'
 import { basename } from '../../types/shared'
-import ConfirmDialog from './ConfirmDialog.vue'
 import AdminLoginDialog from './AdminLoginDialog.vue'
 
 const props = defineProps<{
@@ -336,14 +335,6 @@ async function handleVerifyPassword() {
       </div>
     </div>
   </div>
-
-  <ConfirmDialog
-    :visible="confirmStore.visible"
-    :title="confirmStore.title"
-    :message="confirmStore.message"
-    @confirm="confirmStore.onConfirm"
-    @cancel="confirmStore.onCancel"
-  />
 
   <AdminLoginDialog
     :visible="showAdminLogin"

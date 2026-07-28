@@ -346,6 +346,11 @@ body {
   animation: overlayFadeIn 0.2s ease;
 }
 
+.modal-overlay.no-blur {
+  backdrop-filter: none;
+  background: rgba(0, 0, 0, 0.3);
+}
+
 @keyframes overlayFadeIn {
   from {
     opacity: 0;

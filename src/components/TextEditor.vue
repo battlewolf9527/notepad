@@ -12,6 +12,9 @@ const editorRef = ref<HTMLDivElement | null>(null)
 let savedSelectionStart = 0
 let savedSelectionEnd = 0
 let hasSelection = false
+let isInternalUpdate = false
+let lastFindText = ''
+let lastFindEndPos = 0
 
 const content = computed({
   get: () => editorStore.content,
@@ -30,10 +33,11 @@ function updateCursorPosition() {
   if (!selection || selection.rangeCount === 0) return
 
   const range = selection.getRangeAt(0)
-  const text = editor.innerText.substring(
-    0,
-    getTextPosition(editor, range.startContainer, range.startOffset),
-  )
+  const text =
+    editor.textContent?.substring(
+      0,
+      getTextPosition(editor, range.startContainer, range.startOffset),
+    ) || ''
   const lines = text.split('\n')
   const line = lines.length
   const lastLine = lines[lines.length - 1] || ''
@@ -86,17 +90,48 @@ function insertText(text: string) {
   editor.focus()
   document.execCommand('insertText', false, text)
   updateCursorPosition()
-  editorStore.updateContent(editor.innerText)
+  editorStore.updateContent(editor.textContent || '')
 }
 
 function findText(searchText: string, caseSensitive: boolean = false): boolean {
   const editor = editorRef.value
   if (!editor || !searchText) return false
 
-  const content = editor.innerText
+  const content = editor.textContent || ''
   const flags = caseSensitive ? 'g' : 'gi'
-  const regex = new RegExp(searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags)
-  const match = regex.exec(content)
+  const escapedText = searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const searchKey = caseSensitive ? searchText : searchText.toLowerCase()
+
+  let startIndex = 0
+
+  if (searchKey === lastFindText && lastFindEndPos > 0 && lastFindEndPos < content.length) {
+    startIndex = lastFindEndPos
+  } else {
+    editor.focus()
+    const selection = window.getSelection()
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0)
+      if (editor.contains(range.commonAncestorContainer)) {
+        startIndex = getTextPosition(editor, range.startContainer, range.startOffset)
+      }
+    }
+    lastFindText = searchKey
+  }
+
+  const regex = new RegExp(escapedText, flags)
+  regex.lastIndex = startIndex
+  let match = regex.exec(content)
+
+  let wrapped = false
+  if (!match) {
+    regex.lastIndex = 0
+    match = regex.exec(content)
+    wrapped = true
+    if (match && match.index >= startIndex) {
+      lastFindEndPos = 0
+      return false
+    }
+  }
 
   if (match) {
     editor.focus()
@@ -120,9 +155,12 @@ function findText(searchText: string, caseSensitive: boolean = false): boolean {
 
     selection?.removeAllRanges()
     selection?.addRange(range)
+
+    lastFindEndPos = match.index + match[0].length
     return true
   }
 
+  lastFindEndPos = 0
   return false
 }
 
@@ -147,7 +185,7 @@ function replaceText(
     editor.focus()
     document.execCommand('insertText', false, replaceWith)
     updateCursorPosition()
-    editorStore.updateContent(editor.innerText)
+    editorStore.updateContent(editor.textContent || '')
     return true
   }
 
@@ -162,7 +200,7 @@ function replaceAllText(
   const editor = editorRef.value
   if (!editor || !searchText) return 0
 
-  const content = editor.innerText
+  const content = editor.textContent || ''
   const flags = caseSensitive ? 'g' : 'gi'
   const regex = new RegExp(searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags)
 
@@ -170,22 +208,91 @@ function replaceAllText(
   if (!matches) return 0
 
   const newValue = content.replace(regex, replaceWith)
-  editor.innerHTML = newValue.replace(/\n/g, '<br>')
+  editor.textContent = newValue
   editorStore.updateContent(newValue)
   return matches.length
+}
+
+function saveCursorPosition(): number {
+  const editor = editorRef.value
+  if (!editor) return 0
+
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return 0
+
+  const range = selection.getRangeAt(0)
+  return getTextPosition(editor, range.startContainer, range.startOffset)
+}
+
+function restoreCursorPosition(position: number) {
+  const editor = editorRef.value
+  if (!editor) return
+
+  const contentLength = editor.textContent?.length || 0
+  const targetPosition = Math.min(position, contentLength)
+
+  editor.focus()
+  const range = document.createRange()
+  const selection = window.getSelection()
+
+  let currentPos = 0
+  let lastTextNode: Text | null = null
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text
+    const nodeLen = node.textContent?.length || 0
+    lastTextNode = node
+
+    if (currentPos + nodeLen > targetPosition) {
+      range.setStart(node, targetPosition - currentPos)
+      range.setEnd(node, targetPosition - currentPos)
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      return
+    }
+    currentPos += nodeLen
+  }
+
+  // 回退逻辑：如果没找到文本节点，或者位置在所有文本节点之后
+  if (lastTextNode) {
+    const lastLen = lastTextNode.textContent?.length || 0
+    range.setStart(lastTextNode, Math.min(targetPosition - (currentPos - lastLen), lastLen))
+    range.setEnd(lastTextNode, Math.min(targetPosition - (currentPos - lastLen), lastLen))
+  } else {
+    // 没有文本节点，在第一个子节点前或编辑器末尾定位
+    const firstChild = editor.firstChild
+    if (firstChild) {
+      range.setStartBefore(firstChild)
+      range.setEndBefore(firstChild)
+    } else {
+      range.setStart(editor, 0)
+      range.setEnd(editor, 0)
+    }
+  }
+
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
+
+function needsHtmlCleanup(editor: HTMLDivElement): boolean {
+  const cleanText = editor.textContent || ''
+  const expectedHtml = cleanText.replace(/\n/g, '<br>')
+  return editor.innerHTML !== expectedHtml
 }
 
 function handleInput() {
   const editor = editorRef.value
   if (!editor) return
 
-  const cleanText = editor.innerText
-  if (editor.innerHTML !== cleanText.replace(/\n/g, '<br>')) {
-    editor.innerHTML = cleanText.replace(/\n/g, '<br>')
-  }
-
+  const cleanText = editor.textContent || ''
   updateCursorPosition()
+
+  isInternalUpdate = true
   editorStore.updateContent(cleanText)
+  nextTick(() => {
+    isInternalUpdate = false
+  })
 }
 
 function handlePaste(e: ClipboardEvent) {
@@ -193,7 +300,7 @@ function handlePaste(e: ClipboardEvent) {
   const text = e.clipboardData?.getData('text/plain') || ''
   document.execCommand('insertText', false, text)
   updateCursorPosition()
-  editorStore.updateContent(editorRef.value?.innerText || '')
+  editorStore.updateContent(editorRef.value?.textContent || '')
 }
 
 function saveSelection() {
@@ -223,7 +330,7 @@ function restoreSelection() {
   const editor = editorRef.value
   if (!editor) return
 
-  const contentLength = editor.innerText.length
+  const contentLength = editor.textContent?.length || 0
   if (savedSelectionStart > contentLength || savedSelectionEnd > contentLength) {
     hasSelection = false
     return
@@ -283,8 +390,8 @@ onMounted(() => {
   const editor = editorRef.value
   if (!editor) return
   const content = editorStore.content
-  if (editor.innerText !== content) {
-    editor.innerHTML = content.replace(/\n/g, '<br>')
+  if (editor.textContent !== content) {
+    editor.textContent = content
   }
 })
 
@@ -292,7 +399,7 @@ function goToLine(line: number) {
   const editor = editorRef.value
   if (!editor) return
 
-  const text = editor.innerText
+  const text = editor.textContent || ''
   const lines = text.split('\n')
   const maxLine = lines.length
 
@@ -335,11 +442,13 @@ function goToLine(line: number) {
 watch(
   () => editorStore.content,
   (newContent) => {
+    if (isInternalUpdate) return
+
     nextTick(() => {
       const editor = editorRef.value
       if (!editor) return
-      if (editor.innerText !== newContent) {
-        editor.innerHTML = newContent.replace(/\n/g, '<br>')
+      if (editor.textContent !== newContent) {
+        editor.textContent = newContent
       }
       updateCursorPosition()
     })
@@ -372,7 +481,7 @@ async function cut() {
     editor.focus()
     document.execCommand('delete', false)
     updateCursorPosition()
-    editorStore.updateContent(editor.innerText)
+    editorStore.updateContent(editor.textContent || '')
   } catch {
     toastStore.error('剪切失败')
   }
@@ -402,7 +511,7 @@ async function paste() {
     editor.focus()
     document.execCommand('insertText', false, text)
     updateCursorPosition()
-    editorStore.updateContent(editor.innerText)
+    editorStore.updateContent(editor.textContent || '')
   } catch {
     toastStore.error('粘贴失败')
   }
@@ -423,7 +532,7 @@ function deleteSelection() {
   editor.focus()
   document.execCommand('delete', false)
   updateCursorPosition()
-  editorStore.updateContent(editor.innerText)
+  editorStore.updateContent(editor.textContent || '')
 }
 
 defineExpose({

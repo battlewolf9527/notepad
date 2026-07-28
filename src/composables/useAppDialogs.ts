@@ -1,7 +1,8 @@
 import { ref } from 'vue'
 
 export function useAppDialogs() {
-  const showFindReplace = ref(false)
+  const showFindDialog = ref(false)
+  const showReplaceDialog = ref(false)
   const showGoToDialog = ref(false)
   const showFontDialog = ref(false)
   const showOpenDialog = ref(false)
@@ -16,12 +17,20 @@ export function useAppDialogs() {
 
   const downloadFilename = ref('')
 
-  function openFindReplace() {
-    showFindReplace.value = true
+  function openFindDialog() {
+    showFindDialog.value = true
   }
 
-  function closeFindReplace() {
-    showFindReplace.value = false
+  function closeFindDialog() {
+    showFindDialog.value = false
+  }
+
+  function openReplaceDialog() {
+    showReplaceDialog.value = true
+  }
+
+  function closeReplaceDialog() {
+    showReplaceDialog.value = false
   }
 
   function openGoToDialog() {
@@ -114,7 +123,8 @@ export function useAppDialogs() {
   }
 
   return {
-    showFindReplace,
+    showFindDialog,
+    showReplaceDialog,
     showGoToDialog,
     showFontDialog,
     showOpenDialog,
@@ -127,8 +137,10 @@ export function useAppDialogs() {
     showAbout,
     showAdminLoginDialog,
     downloadFilename,
-    openFindReplace,
-    closeFindReplace,
+    openFindDialog,
+    closeFindDialog,
+    openReplaceDialog,
+    closeReplaceDialog,
     openGoToDialog,
     closeGoToDialog,
     openFontDialog,

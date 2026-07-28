@@ -48,7 +48,7 @@ useModalClose(() => emit('cancel'))
 
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="modal-overlay">
+    <div v-if="visible" class="modal-overlay no-blur">
       <div
         ref="dialogRef"
         class="modal-dialog confirm-dialog"

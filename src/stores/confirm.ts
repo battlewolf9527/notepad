@@ -10,6 +10,9 @@ export const useConfirmStore = defineStore('confirm', () => {
   const resolve = ref<((value: 'yes' | 'no' | 'cancel') => void) | null>(null)
 
   function confirm(msg: string, confirmTitle = '确认'): Promise<boolean> {
+    if (visible.value) {
+      return Promise.resolve(false)
+    }
     return new Promise((res) => {
       title.value = confirmTitle
       message.value = msg
@@ -29,6 +32,9 @@ export const useConfirmStore = defineStore('confirm', () => {
     btnNo = '否',
     btnCancel = '取消',
   ): Promise<'yes' | 'no' | 'cancel'> {
+    if (visible.value) {
+      return Promise.resolve('cancel')
+    }
     return new Promise((res) => {
       title.value = confirmTitle
       message.value = msg

@@ -35,11 +35,11 @@ export function useEditorCommands(
   }
 
   const find = () => {
-    dialogs.openFindReplace()
+    dialogs.openFindDialog()
   }
 
   const replace = () => {
-    dialogs.openFindReplace()
+    dialogs.openReplaceDialog()
   }
 
   const goTo = () => {

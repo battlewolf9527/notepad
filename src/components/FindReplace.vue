@@ -47,7 +47,7 @@ useModalClose(() => emit('close'))
 </script>
 
 <template>
-  <div v-if="visible" class="modal-overlay" @click.self="emit('close')">
+  <div v-if="visible" class="modal-overlay no-blur" @click.self="emit('close')">
     <div
       ref="dialogRef"
       class="modal-dialog find-dialog"
@@ -60,7 +60,7 @@ useModalClose(() => emit('close'))
       "
     >
       <div class="dialog-header" @mousedown="dialogDrag.onMouseDown">
-        <span>查找和替换</span>
+        <span>替换</span>
         <button class="close-btn" @click="emit('close')">×</button>
       </div>
 
@@ -90,7 +90,7 @@ useModalClose(() => emit('close'))
           <button @click="handleReplaceAll">全部替换</button>
         </div>
         <div class="dialog-actions">
-          <button @click="emit('close')">取消</button>
+          <button @click="emit('close')">关闭</button>
         </div>
       </div>
     </div>
@@ -98,6 +98,12 @@ useModalClose(() => emit('close'))
 </template>
 
 <style scoped>
+.modal-overlay.no-blur {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(0, 0, 0, 0.3);
+}
+
 .find-dialog {
   width: calc(500px * var(--scale));
   max-width: 90vw;
