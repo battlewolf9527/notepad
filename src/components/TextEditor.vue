@@ -3,6 +3,12 @@ import { ref, watch, nextTick, computed, onMounted } from 'vue'
 import { useEditorStore } from '../stores/editor'
 import { useConfigStore } from '../stores/config'
 import { useToastStore } from '../stores/toast'
+import {
+  getTextFromContentEditable,
+  setTextToContentEditable,
+  getTextOffsetFromDOM,
+  getDOMPositionFromTextOffset,
+} from '../utils/editor-content'
 
 const editorStore = useEditorStore()
 const configStore = useConfigStore()
@@ -16,11 +22,6 @@ let isInternalUpdate = false
 let lastFindText = ''
 let lastFindEndPos = 0
 
-const content = computed({
-  get: () => editorStore.content,
-  set: (val) => editorStore.updateContent(val),
-})
-
 const scaledFontSize = computed(() => {
   return (editorStore.fontSize * configStore.scale) / 100
 })
@@ -33,31 +34,14 @@ function updateCursorPosition() {
   if (!selection || selection.rangeCount === 0) return
 
   const range = selection.getRangeAt(0)
-  const text =
-    editor.textContent?.substring(
-      0,
-      getTextPosition(editor, range.startContainer, range.startOffset),
-    ) || ''
+  const offset = getTextOffsetFromDOM(editor, range.startContainer, range.startOffset)
+  const text = getTextFromContentEditable(editor).substring(0, offset)
   const lines = text.split('\n')
   const line = lines.length
   const lastLine = lines[lines.length - 1] || ''
   const column = lastLine.length + 1
 
   editorStore.setCursorPosition(line, column)
-}
-
-function getTextPosition(editor: HTMLDivElement, node: Node, offset: number): number {
-  let position = 0
-  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
-
-  while (walker.nextNode()) {
-    const currentNode = walker.currentNode
-    if (currentNode === node) {
-      return position + offset
-    }
-    position += currentNode.textContent?.length || 0
-  }
-  return position
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -90,14 +74,14 @@ function insertText(text: string) {
   editor.focus()
   document.execCommand('insertText', false, text)
   updateCursorPosition()
-  editorStore.updateContent(editor.textContent || '')
+  editorStore.updateContent(getTextFromContentEditable(editor))
 }
 
 function findText(searchText: string, caseSensitive: boolean = false): boolean {
   const editor = editorRef.value
   if (!editor || !searchText) return false
 
-  const content = editor.textContent || ''
+  const content = getTextFromContentEditable(editor)
   const flags = caseSensitive ? 'g' : 'gi'
   const escapedText = searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const searchKey = caseSensitive ? searchText : searchText.toLowerCase()
@@ -112,7 +96,7 @@ function findText(searchText: string, caseSensitive: boolean = false): boolean {
     if (selection && selection.rangeCount > 0) {
       const range = selection.getRangeAt(0)
       if (editor.contains(range.commonAncestorContainer)) {
-        startIndex = getTextPosition(editor, range.startContainer, range.startOffset)
+        startIndex = getTextOffsetFromDOM(editor, range.startContainer, range.startOffset)
       }
     }
     lastFindText = searchKey
@@ -138,23 +122,15 @@ function findText(searchText: string, caseSensitive: boolean = false): boolean {
     const range = document.createRange()
     const selection = window.getSelection()
 
-    let currentPos = 0
-    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+    const startPos = getDOMPositionFromTextOffset(editor, match.index)
+    const endPos = getDOMPositionFromTextOffset(editor, match.index + match[0].length)
 
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text
-      const nodeLen = node.textContent?.length || 0
-
-      if (currentPos + nodeLen > match.index) {
-        range.setStart(node, match.index - currentPos)
-        range.setEnd(node, match.index - currentPos + match[0].length)
-        break
-      }
-      currentPos += nodeLen
+    if (startPos && endPos) {
+      range.setStart(startPos.node, startPos.offset)
+      range.setEnd(endPos.node, endPos.offset)
+      selection?.removeAllRanges()
+      selection?.addRange(range)
     }
-
-    selection?.removeAllRanges()
-    selection?.addRange(range)
 
     lastFindEndPos = match.index + match[0].length
     return true
@@ -185,7 +161,7 @@ function replaceText(
     editor.focus()
     document.execCommand('insertText', false, replaceWith)
     updateCursorPosition()
-    editorStore.updateContent(editor.textContent || '')
+    editorStore.updateContent(getTextFromContentEditable(editor))
     return true
   }
 
@@ -200,7 +176,7 @@ function replaceAllText(
   const editor = editorRef.value
   if (!editor || !searchText) return 0
 
-  const content = editor.textContent || ''
+  const content = getTextFromContentEditable(editor)
   const flags = caseSensitive ? 'g' : 'gi'
   const regex = new RegExp(searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags)
 
@@ -208,7 +184,7 @@ function replaceAllText(
   if (!matches) return 0
 
   const newValue = content.replace(regex, replaceWith)
-  editor.textContent = newValue
+  setTextToContentEditable(editor, newValue)
   editorStore.updateContent(newValue)
   return matches.length
 }
@@ -221,71 +197,34 @@ function saveCursorPosition(): number {
   if (!selection || selection.rangeCount === 0) return 0
 
   const range = selection.getRangeAt(0)
-  return getTextPosition(editor, range.startContainer, range.startOffset)
+  return getTextOffsetFromDOM(editor, range.startContainer, range.startOffset)
 }
 
 function restoreCursorPosition(position: number) {
   const editor = editorRef.value
   if (!editor) return
 
-  const contentLength = editor.textContent?.length || 0
+  const contentLength = getTextFromContentEditable(editor).length
   const targetPosition = Math.min(position, contentLength)
+
+  const domPos = getDOMPositionFromTextOffset(editor, targetPosition)
+  if (!domPos) return
 
   editor.focus()
   const range = document.createRange()
   const selection = window.getSelection()
 
-  let currentPos = 0
-  let lastTextNode: Text | null = null
-  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
-
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text
-    const nodeLen = node.textContent?.length || 0
-    lastTextNode = node
-
-    if (currentPos + nodeLen > targetPosition) {
-      range.setStart(node, targetPosition - currentPos)
-      range.setEnd(node, targetPosition - currentPos)
-      selection?.removeAllRanges()
-      selection?.addRange(range)
-      return
-    }
-    currentPos += nodeLen
-  }
-
-  // 回退逻辑：如果没找到文本节点，或者位置在所有文本节点之后
-  if (lastTextNode) {
-    const lastLen = lastTextNode.textContent?.length || 0
-    range.setStart(lastTextNode, Math.min(targetPosition - (currentPos - lastLen), lastLen))
-    range.setEnd(lastTextNode, Math.min(targetPosition - (currentPos - lastLen), lastLen))
-  } else {
-    // 没有文本节点，在第一个子节点前或编辑器末尾定位
-    const firstChild = editor.firstChild
-    if (firstChild) {
-      range.setStartBefore(firstChild)
-      range.setEndBefore(firstChild)
-    } else {
-      range.setStart(editor, 0)
-      range.setEnd(editor, 0)
-    }
-  }
-
+  range.setStart(domPos.node, domPos.offset)
+  range.setEnd(domPos.node, domPos.offset)
   selection?.removeAllRanges()
   selection?.addRange(range)
-}
-
-function needsHtmlCleanup(editor: HTMLDivElement): boolean {
-  const cleanText = editor.textContent || ''
-  const expectedHtml = cleanText.replace(/\n/g, '<br>')
-  return editor.innerHTML !== expectedHtml
 }
 
 function handleInput() {
   const editor = editorRef.value
   if (!editor) return
 
-  const cleanText = editor.textContent || ''
+  const cleanText = getTextFromContentEditable(editor)
   updateCursorPosition()
 
   isInternalUpdate = true
@@ -300,7 +239,9 @@ function handlePaste(e: ClipboardEvent) {
   const text = e.clipboardData?.getData('text/plain') || ''
   document.execCommand('insertText', false, text)
   updateCursorPosition()
-  editorStore.updateContent(editorRef.value?.textContent || '')
+  const editor = editorRef.value
+  if (!editor) return
+  editorStore.updateContent(getTextFromContentEditable(editor))
 }
 
 function saveSelection() {
@@ -319,8 +260,8 @@ function saveSelection() {
     return
   }
 
-  savedSelectionStart = getTextPosition(editor, range.startContainer, range.startOffset)
-  savedSelectionEnd = getTextPosition(editor, range.endContainer, range.endOffset)
+  savedSelectionStart = getTextOffsetFromDOM(editor, range.startContainer, range.startOffset)
+  savedSelectionEnd = getTextOffsetFromDOM(editor, range.endContainer, range.endOffset)
   hasSelection = true
 }
 
@@ -330,8 +271,16 @@ function restoreSelection() {
   const editor = editorRef.value
   if (!editor) return
 
-  const contentLength = editor.textContent?.length || 0
+  const contentLength = getTextFromContentEditable(editor).length
   if (savedSelectionStart > contentLength || savedSelectionEnd > contentLength) {
+    hasSelection = false
+    return
+  }
+
+  const startDomPos = getDOMPositionFromTextOffset(editor, savedSelectionStart)
+  const endDomPos = getDOMPositionFromTextOffset(editor, savedSelectionEnd)
+
+  if (!startDomPos || !endDomPos) {
     hasSelection = false
     return
   }
@@ -340,40 +289,10 @@ function restoreSelection() {
   const range = document.createRange()
   const selection = window.getSelection()
 
-  let currentPos = 0
-  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
-  let startNode: Text | null = null
-  let startOffset = 0
-  let endNode: Text | null = null
-  let endOffset = 0
-
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text
-    const nodeLen = node.textContent?.length || 0
-
-    if (!startNode && currentPos + nodeLen > savedSelectionStart) {
-      startNode = node
-      startOffset = savedSelectionStart - currentPos
-    }
-
-    if (!endNode && currentPos + nodeLen > savedSelectionEnd) {
-      endNode = node
-      endOffset = savedSelectionEnd - currentPos
-    }
-
-    if (startNode && endNode) {
-      break
-    }
-
-    currentPos += nodeLen
-  }
-
-  if (startNode && endNode) {
-    range.setStart(startNode, startOffset)
-    range.setEnd(endNode, endOffset)
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-  }
+  range.setStart(startDomPos.node, startDomPos.offset)
+  range.setEnd(endDomPos.node, endDomPos.offset)
+  selection?.removeAllRanges()
+  selection?.addRange(range)
 
   hasSelection = false
 }
@@ -390,8 +309,8 @@ onMounted(() => {
   const editor = editorRef.value
   if (!editor) return
   const content = editorStore.content
-  if (editor.textContent !== content) {
-    editor.textContent = content
+  if (getTextFromContentEditable(editor) !== content) {
+    setTextToContentEditable(editor, content)
   }
 })
 
@@ -399,7 +318,7 @@ function goToLine(line: number) {
   const editor = editorRef.value
   if (!editor) return
 
-  const text = editor.textContent || ''
+  const text = getTextFromContentEditable(editor)
   const lines = text.split('\n')
   const maxLine = lines.length
 
@@ -414,25 +333,15 @@ function goToLine(line: number) {
     position += lineContent.length + 1
   }
 
+  const domPos = getDOMPositionFromTextOffset(editor, position)
+  if (!domPos) return
+
   editor.focus()
   const range = document.createRange()
   const selection = window.getSelection()
 
-  let currentPos = 0
-  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
-
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text
-    const nodeLen = node.textContent?.length || 0
-
-    if (currentPos + nodeLen > position) {
-      range.setStart(node, position - currentPos)
-      range.setEnd(node, position - currentPos)
-      break
-    }
-    currentPos += nodeLen
-  }
-
+  range.setStart(domPos.node, domPos.offset)
+  range.setEnd(domPos.node, domPos.offset)
   selection?.removeAllRanges()
   selection?.addRange(range)
   editorStore.setCursorPosition(line, 1)
@@ -447,8 +356,8 @@ watch(
     nextTick(() => {
       const editor = editorRef.value
       if (!editor) return
-      if (editor.textContent !== newContent) {
-        editor.textContent = newContent
+      if (getTextFromContentEditable(editor) !== newContent) {
+        setTextToContentEditable(editor, newContent)
       }
       updateCursorPosition()
     })
@@ -481,7 +390,7 @@ async function cut() {
     editor.focus()
     document.execCommand('delete', false)
     updateCursorPosition()
-    editorStore.updateContent(editor.textContent || '')
+    editorStore.updateContent(getTextFromContentEditable(editor))
   } catch {
     toastStore.error('剪切失败')
   }
@@ -511,7 +420,7 @@ async function paste() {
     editor.focus()
     document.execCommand('insertText', false, text)
     updateCursorPosition()
-    editorStore.updateContent(editor.textContent || '')
+    editorStore.updateContent(getTextFromContentEditable(editor))
   } catch {
     toastStore.error('粘贴失败')
   }
@@ -532,7 +441,7 @@ function deleteSelection() {
   editor.focus()
   document.execCommand('delete', false)
   updateCursorPosition()
-  editorStore.updateContent(editor.textContent || '')
+  editorStore.updateContent(getTextFromContentEditable(editor))
 }
 
 defineExpose({
