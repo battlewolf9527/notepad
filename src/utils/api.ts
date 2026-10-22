@@ -16,7 +16,7 @@ export class FolderProtectedError extends Error {
 export async function apiRequest<T = unknown>(
   endpoint: string,
   options: RequestInit = {},
-  useAdminAuth: boolean = false,
+  _useAdminAuth: boolean = false,
 ): Promise<T> {
   const url = `${API_PREFIX}${endpoint}`
 

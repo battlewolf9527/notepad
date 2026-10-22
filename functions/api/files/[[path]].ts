@@ -1,4 +1,4 @@
-import { sanitizePath } from '../../utils/path'
+import { sanitizePath, buildDecodedFilePath } from '../../utils/path'
 import { LIST_LIMIT } from '../../utils/constants'
 import {
   successResponse,
@@ -17,7 +17,7 @@ import {
   checkFoldersProtected,
   checkFoldersNoEncrypt,
 } from '../../utils/folder-auth'
-import { isRootPath, getParentPath, isRootOperation } from '../../../types/shared'
+import { isRootOperation } from '../../../types/shared'
 import { parseJsonOrBadRequest } from '../../utils/api'
 import { checkRootPathAdminAccess } from '../../utils/admin'
 import type { Env } from '../../types/env'
@@ -182,7 +182,7 @@ export async function onRequestGet({
     return listFiles(env, path, request)
   }
 
-  const filePath = params.path.join('/')
+  const filePath = buildDecodedFilePath(params.path)
   return readFile(env, filePath, request)
 }
 
@@ -195,7 +195,7 @@ export async function onRequestPut({
   request: Request
   env: Env
 }) {
-  const filePath = params.path.join('/')
+  const filePath = buildDecodedFilePath(params.path)
   const sanitized = sanitizePath(filePath)
 
   if (sanitized === null) {
@@ -252,7 +252,7 @@ export async function onRequestDelete({
   request: Request
   env: Env
 }) {
-  const filePath = params.path.join('/')
+  const filePath = buildDecodedFilePath(params.path)
   const sanitized = sanitizePath(filePath)
 
   if (sanitized === null) {

@@ -140,7 +140,7 @@ function openMenu(name: string) {
   activeMenu.value = activeMenu.value === name ? null : name
 }
 
-function closeMenu(e?: MouseEvent) {
+function closeMenu() {
   if (submenuCloseTimer.value) {
     clearTimeout(submenuCloseTimer.value)
     submenuCloseTimer.value = null
@@ -148,15 +148,6 @@ function closeMenu(e?: MouseEvent) {
 
   activeMenu.value = null
   hoveredSubmenu.value = null
-}
-
-function handleMenuBarMouseDown(e: MouseEvent) {
-  const target = e.target as HTMLElement
-  const menuItem = target.closest('.menu-item')
-  if (!menuItem) {
-    e.preventDefault()
-    e.stopPropagation()
-  }
 }
 
 function openSubmenu(itemIndex: number) {

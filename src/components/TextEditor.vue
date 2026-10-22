@@ -106,11 +106,9 @@ function findText(searchText: string, caseSensitive: boolean = false): boolean {
   regex.lastIndex = startIndex
   let match = regex.exec(content)
 
-  let wrapped = false
   if (!match) {
     regex.lastIndex = 0
     match = regex.exec(content)
-    wrapped = true
     if (match && match.index >= startIndex) {
       lastFindEndPos = 0
       return false
@@ -187,37 +185,6 @@ function replaceAllText(
   setTextToContentEditable(editor, newValue)
   editorStore.updateContent(newValue)
   return matches.length
-}
-
-function saveCursorPosition(): number {
-  const editor = editorRef.value
-  if (!editor) return 0
-
-  const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0) return 0
-
-  const range = selection.getRangeAt(0)
-  return getTextOffsetFromDOM(editor, range.startContainer, range.startOffset)
-}
-
-function restoreCursorPosition(position: number) {
-  const editor = editorRef.value
-  if (!editor) return
-
-  const contentLength = getTextFromContentEditable(editor).length
-  const targetPosition = Math.min(position, contentLength)
-
-  const domPos = getDOMPositionFromTextOffset(editor, targetPosition)
-  if (!domPos) return
-
-  editor.focus()
-  const range = document.createRange()
-  const selection = window.getSelection()
-
-  range.setStart(domPos.node, domPos.offset)
-  range.setEnd(domPos.node, domPos.offset)
-  selection?.removeAllRanges()
-  selection?.addRange(range)
 }
 
 function handleInput() {

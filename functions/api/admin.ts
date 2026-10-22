@@ -4,7 +4,7 @@ import {
   incrementTokenVersion,
   verifyAdminToken,
 } from '../utils/admin'
-import { createJwt, verifyJwt } from '../utils/jwt'
+import { createJwt } from '../utils/jwt'
 import { Logger } from '../utils/error'
 import {
   successResponse,
